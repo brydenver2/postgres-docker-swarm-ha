@@ -10,8 +10,6 @@ services:
       - pg_data:/bitnami/postgresql
     env_file: .env_postgres
     deploy: &swarm-01
-      labels:
-        traefik.enable: "false"
       placement:
         constraints:
           - node.hostname == swarm-01
@@ -97,8 +95,6 @@ services:
     env_file: .env_postgres
     deploy:
       replicas: 2
-      labels:
-        traefik.enable: "false"
     healthcheck:
       test: ["CMD", "/opt/bitnami/scripts/pgpool/healthcheck.sh"]
       interval: 10s
@@ -111,59 +107,33 @@ services:
     image: ghcr.io/romaxa55/ghost-cms-in-docker:master
     deploy:
       replicas: 6
-      labels:
-        - traefik.enable=true
-        - traefik.http.routers.ghost.rule=Host(`roshamagin.site`)
-        - traefik.http.routers.ghost.entrypoints=web
-        - traefik.http.routers.ghost.middlewares=redirect-to-https
-        - traefik.http.routers.ghost-secured.rule=Host(`roshamagin.site`)
-        - traefik.http.routers.ghost-secured.entrypoints=websecure
-        - traefik.http.routers.ghost-secured.tls.certresolver=myresolver
-        - traefik.http.services.ghost.loadbalancer.server.port=2368
     env_file: .env_postgres
     networks:
       - postgres-network
     volumes:
       - /mnt/glusterfs:/var/lib/ghost/content
 
-  # Traefik reverse proxy and load balancer
-  # Supports both Traefik v2.x and v3.x
-  # For HAProxy alternative, use docker-compose.haproxy.yml instead
-  # See documents/LOAD_BALANCER_OPTIONS.md for comparison
-  traefik:
-    image: traefik:latest  # or traefik:v3.0 or traefik:v2.10
-    command:
-      - --providers.docker=true
-      - --providers.docker.swarmMode=true
-      - --providers.docker.endpoint=unix:///var/run/docker.sock
-      - --entrypoints.web.address=:80
-      - --entrypoints.websecure.address=:443
-      # Uncomment for HTTP/3 support (Traefik v3.0+)
-      # - --experimental.http3=true
-      # - --entrypoints.websecure.http3=true
-      - --certificatesresolvers.myresolver.acme.dnschallenge=true
-      - --certificatesresolvers.myresolver.acme.dnschallenge.provider=cloudflare
-      - --certificatesresolvers.myresolver.acme.email=info@roshamagin.site
-      - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
-      # Uncomment to enable dashboard (development only)
-      # - --api.dashboard=true
-      # - --api.insecure=true
-    environment:
-      - CF_DNS_API_TOKEN=$CF_API_KEY
+  haproxy:
+    image: haproxy:latest
     ports:
       - 80:80
       - 443:443
+      - 8404:8404
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/glusterfs/letsencrypt:/letsencrypt
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - /mnt/glusterfs/ssl:/etc/ssl/certs:ro
     networks:
       - postgres-network
     deploy:
-      labels:
-        - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      replicas: 1
       placement:
         constraints:
           - node.role == manager
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 
 networks:
